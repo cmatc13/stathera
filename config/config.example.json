@@ -1,0 +1,55 @@
+{
+  "env": "development",
+  "redis": {
+    "address": "localhost:6379",
+    "password": "",
+    "db": 0,
+    "max_retries": 3,
+    "pool_size": 10,
+    "dial_timeout": "5s"
+  },
+  "kafka": {
+    "brokers": "localhost:9092",
+    "consumer_group_id": "transaction_processor_group",
+    "transaction_topic": "transactions",
+    "confirmed_topic": "confirmed_transactions",
+    "failed_topic": "failed_transactions",
+    "session_timeout": "30s",
+    "heartbeat_interval": "3s",
+    "max_poll_interval": "5m",
+    "auto_commit_interval": "5s",
+    "producer_max_retries": 3,
+    "producer_retry_backoff": "100ms"
+  },
+  "api": {
+    "host": "0.0.0.0",
+    "port": "8080",
+    "version": "v1",
+    "read_timeout": "10s",
+    "write_timeout": "10s",
+    "shutdown_timeout": "30s",
+    "cors_allowed_origins": ["*"]
+  },
+  "auth": {
+    "jwt_secret": "your_jwt_secret_here",
+    "jwt_expiration_time": "24h",
+    "refresh_token_duration": "168h"
+  },
+  "supply": {
+    "min_inflation": 1.5,
+    "max_inflation": 3.0,
+    "max_step_size": 0.1,
+    "reserve_address": "system_reserve_address",
+    "adjust_interval": "24h"
+  },
+  "processor": {
+    "batch_size": 100,
+    "poll_interval": "100ms",
+    "max_concurrency": 10
+  },
+  "log": {
+    "level": "info",
+    "format": "json",
+    "output_path": "stdout"
+  }
+}
