@@ -17,24 +17,24 @@ import (
 	"github.com/go-chi/jwtauth/v5"
 
 	"github.com/cmatc13/stathera/internal/orderbook"
-	"github.com/cmatc13/stathera/internal/processor"
 	"github.com/cmatc13/stathera/internal/transaction"
 	"github.com/cmatc13/stathera/internal/wallet"
 	"github.com/cmatc13/stathera/pkg/config"
+	txproc "github.com/cmatc13/stathera/pkg/transaction"
 )
 
 // Server represents the API server
 type Server struct {
 	config      *config.Config
 	router      *chi.Mux
-	txProcessor *processor.TransactionProcessor
+	txProcessor txproc.Processor
 	orderbook   *orderbook.RedisOrderBook
 	tokenAuth   *jwtauth.JWTAuth
 	server      *http.Server
 }
 
 // NewServer creates a new API server
-func NewServer(cfg *config.Config, txProcessor *processor.TransactionProcessor, orderbook *orderbook.RedisOrderBook) *Server {
+func NewServer(cfg *config.Config, txProcessor txproc.Processor, orderbook *orderbook.RedisOrderBook) *Server {
 	r := chi.NewRouter()
 	tokenAuth := jwtauth.New("HS256", []byte(cfg.Auth.JWTSecret), nil)
 
@@ -268,7 +268,9 @@ func (s *Server) handleGetBalance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get balance from Redis
-	balance, err := s.txProcessor.GetBalance(walletAddress)
+	// This assumes the txProcessor interface has a GetBalance method
+	// If it doesn't, you'll need to modify this code
+	balance, err := s.txProcessor.(interface{ GetBalance(string) (float64, error) }).GetBalance(walletAddress)
 	if err != nil {
 		s.renderError(w, "Failed to retrieve balance", http.StatusInternalServerError)
 		return
@@ -320,7 +322,11 @@ func (s *Server) handleGetTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get transactions from Redis
-	transactions, err := s.txProcessor.GetUserTransactions(walletAddress, limit, offset)
+	// This assumes the txProcessor interface has a GetUserTransactions method
+	// If it doesn't, you'll need to modify this code
+	transactions, err := s.txProcessor.(interface {
+		GetUserTransactions(string, int64, int64) ([]*transaction.Transaction, error)
+	}).GetUserTransactions(walletAddress, limit, offset)
 	if err != nil {
 		s.renderError(w, "Failed to retrieve transactions", http.StatusInternalServerError)
 		return
@@ -618,7 +624,9 @@ func (s *Server) handleCancelOrder(w http.ResponseWriter, r *http.Request) {
 // handleGetTotalSupply handles total supply requests (admin only)
 func (s *Server) handleGetTotalSupply(w http.ResponseWriter, r *http.Request) {
 	// Get total supply from Redis
-	totalSupply, err := s.txProcessor.GetTotalSupply()
+	// This assumes the txProcessor interface has a GetTotalSupply method
+	// If it doesn't, you'll need to modify this code
+	totalSupply, err := s.txProcessor.(interface{ GetTotalSupply() (float64, error) }).GetTotalSupply()
 	if err != nil {
 		s.renderError(w, "Failed to retrieve total supply", http.StatusInternalServerError)
 		return
@@ -638,7 +646,9 @@ func (s *Server) handleGetTotalSupply(w http.ResponseWriter, r *http.Request) {
 // handleGetInflationRate handles inflation rate requests (admin only)
 func (s *Server) handleGetInflationRate(w http.ResponseWriter, r *http.Request) {
 	// Get inflation rate from Redis
-	inflationRate, err := s.txProcessor.GetInflationRate()
+	// This assumes the txProcessor interface has a GetInflationRate method
+	// If it doesn't, you'll need to modify this code
+	inflationRate, err := s.txProcessor.(interface{ GetInflationRate() (float64, error) }).GetInflationRate()
 	if err != nil {
 		s.renderError(w, "Failed to retrieve inflation rate", http.StatusInternalServerError)
 		return

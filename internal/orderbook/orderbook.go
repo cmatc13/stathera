@@ -188,12 +188,7 @@ func (rob *RedisOrderBook) matchOrder(order *Order) ([]*Match, error) {
 	var matches []*Match
 
 	// Determine which set to search based on order type
-	var counterpartyKey string
-	if order.Type == BidOrder {
-		counterpartyKey = askOrdersKey
-	} else {
-		counterpartyKey = bidOrdersKey
-	}
+	// The counterparty key will be used to find matching orders
 
 	// Get potential matching orders
 	var counterpartyOrders []string

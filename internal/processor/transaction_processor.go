@@ -8,7 +8,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
+	"github.com/segmentio/kafka-go"
 
 	"github.com/cmatc13/stathera/internal/storage"
 	"github.com/cmatc13/stathera/internal/transaction"
@@ -32,12 +32,13 @@ const (
 	consumerGroupID = "transaction_processor_group"
 )
 
-// TransactionProcessor processes incoming transactions using Kafka and Redis
+// TransactionProcessor processes incoming transactions using Kafka and Redis.
+// It implements the pkg/transaction.Processor interface.
 type TransactionProcessor struct {
 	ctx         context.Context
 	config      *config.Config
-	consumer    *kafka.Consumer
-	producer    *kafka.Producer
+	consumer    *kafka.Reader
+	producer    *kafka.Writer
 	redisLedger *storage.RedisLedger
 }
 
@@ -50,21 +51,17 @@ func NewTransactionProcessor(ctx context.Context, cfg *config.Config) (*Transact
 	}
 
 	// Initialize Kafka consumer
-	consumer, err := kafka.NewConsumer(&kafka.ConfigMap{
-		"bootstrap.servers": cfg.Kafka.Brokers,
-		"group.id":          consumerGroupID,
-		"auto.offset.reset": "earliest",
+	consumer := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:     []string{cfg.Kafka.Brokers},
+		Topic:       transactionTopic,
+		GroupID:     consumerGroupID,
+		StartOffset: kafka.FirstOffset,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
-	}
 
 	// Initialize Kafka producer
-	producer, err := kafka.NewProducer(&kafka.ConfigMap{
-		"bootstrap.servers": cfg.Kafka.Brokers,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
+	producer := &kafka.Writer{
+		Addr:     kafka.TCP(cfg.Kafka.Brokers),
+		Balancer: &kafka.LeastBytes{},
 	}
 
 	return &TransactionProcessor{
@@ -78,12 +75,6 @@ func NewTransactionProcessor(ctx context.Context, cfg *config.Config) (*Transact
 
 // Start begins processing transactions from Kafka
 func (tp *TransactionProcessor) Start() {
-	// Subscribe to the transactions topic
-	err := tp.consumer.SubscribeTopics([]string{transactionTopic}, nil)
-	if err != nil {
-		log.Fatalf("Failed to subscribe to topics: %v", err)
-	}
-
 	// Start processing
 	log.Println("Transaction processor started, waiting for transactions...")
 
@@ -93,16 +84,19 @@ func (tp *TransactionProcessor) Start() {
 			// Context cancelled, shutdown gracefully
 			log.Println("Shutting down transaction processor...")
 			tp.consumer.Close()
-			tp.producer.Flush(15 * 1000) // 15 seconds timeout
 			tp.producer.Close()
 			return
 
 		default:
-			// Poll for new messages
-			msg, err := tp.consumer.ReadMessage(100 * time.Millisecond)
+			// Set a timeout for reading messages
+			ctx, cancel := context.WithTimeout(tp.ctx, 100*time.Millisecond)
+			// Read message
+			msg, err := tp.consumer.ReadMessage(ctx)
+			cancel()
+
 			if err != nil {
 				// Timeout or no message, continue
-				if err.(kafka.Error).Code() == kafka.ErrTimedOut {
+				if err == context.DeadlineExceeded {
 					continue
 				}
 				log.Printf("Error reading message: %v", err)
@@ -110,7 +104,7 @@ func (tp *TransactionProcessor) Start() {
 			}
 
 			// Process the transaction
-			tp.processMessage(msg)
+			tp.processMessage(&msg)
 		}
 	}
 }
@@ -206,14 +200,11 @@ func (tp *TransactionProcessor) publishConfirmedTransaction(tx *transaction.Tran
 	}
 
 	// Publish to Kafka
-	err = tp.producer.Produce(&kafka.Message{
-		TopicPartition: kafka.TopicPartition{
-			Topic:     &confirmedTopic,
-			Partition: kafka.PartitionAny,
-		},
+	err = tp.producer.WriteMessages(tp.ctx, kafka.Message{
+		Topic: confirmedTopic,
 		Key:   []byte(tx.ID),
 		Value: txJSON,
-	}, nil)
+	})
 
 	if err != nil {
 		log.Printf("Error publishing confirmed transaction: %v", err)
@@ -235,21 +226,19 @@ func (tp *TransactionProcessor) publishFailedTransaction(tx *transaction.Transac
 	}
 
 	// Publish to Kafka
-	err = tp.producer.Produce(&kafka.Message{
-		TopicPartition: kafka.TopicPartition{
-			Topic:     &failedTopic,
-			Partition: kafka.PartitionAny,
-		},
+	err = tp.producer.WriteMessages(tp.ctx, kafka.Message{
+		Topic: failedTopic,
 		Key:   []byte(tx.ID),
 		Value: txJSON,
-	}, nil)
+	})
 
 	if err != nil {
 		log.Printf("Error publishing failed transaction: %v", err)
 	}
 }
 
-// SubmitTransaction submits a new transaction to be processed
+// SubmitTransaction submits a new transaction to be processed.
+// This method implements the pkg/transaction.Processor interface.
 func (tp *TransactionProcessor) SubmitTransaction(tx *transaction.Transaction) error {
 	txJSON, err := tx.ToJSON()
 	if err != nil {
@@ -257,14 +246,11 @@ func (tp *TransactionProcessor) SubmitTransaction(tx *transaction.Transaction) e
 	}
 
 	// Publish to Kafka
-	err = tp.producer.Produce(&kafka.Message{
-		TopicPartition: kafka.TopicPartition{
-			Topic:     &transactionTopic,
-			Partition: kafka.PartitionAny,
-		},
+	err = tp.producer.WriteMessages(tp.ctx, kafka.Message{
+		Topic: transactionTopic,
 		Key:   []byte(tx.ID),
 		Value: txJSON,
-	}, nil)
+	})
 
 	if err != nil {
 		return fmt.Errorf("error publishing transaction: %w", err)

@@ -1,4 +1,5 @@
-// cmd/stathera/main.go
+// Package main provides the main entry point for the Stathera application.
+// It initializes and coordinates all services using the service registry pattern.
 package main
 
 import (
@@ -17,6 +18,10 @@ import (
 	"github.com/cmatc13/stathera/pkg/service"
 )
 
+// main is the entry point for the Stathera application.
+// It initializes configuration, sets up the service registry,
+// registers all services, starts them in dependency order,
+// and handles graceful shutdown.
 func main() {
 	// Define command-line flags
 	configFile := flag.String("config", "", "Path to configuration file")
@@ -82,13 +87,14 @@ func main() {
 	}
 
 	// Initialize and register supply manager service
+	// Note: txProcessor implements the pkg/transaction.Processor interface
 	supplyManagerService, err := supply.NewSupplyManagerService(
 		cfg.Redis.Address,
 		cfg.Supply.MinInflation,
 		cfg.Supply.MaxInflation,
 		cfg.Supply.MaxStepSize,
 		cfg.Supply.ReserveAddress,
-		txProcessor,
+		txProcessor, // Pass the transaction processor directly
 	)
 	if err != nil {
 		logger.Fatalf("Failed to initialize supply manager: %v", err)

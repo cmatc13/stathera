@@ -1,4 +1,4 @@
-// pkg/service/registry.go
+// Package service provides interfaces and utilities for managing service lifecycle.
 package service
 
 import (
@@ -9,14 +9,17 @@ import (
 	"time"
 )
 
-// Registry manages all services and their lifecycle
+// Registry manages all services and their lifecycle.
+// It handles service registration, dependency resolution, and coordinated
+// startup and shutdown of services.
 type Registry struct {
 	services map[string]Service
 	mutex    sync.RWMutex
 	logger   *log.Logger
 }
 
-// NewRegistry creates a new service registry
+// NewRegistry creates a new service registry with the provided logger.
+// The registry is used to manage the lifecycle of all services in the application.
 func NewRegistry(logger *log.Logger) *Registry {
 	return &Registry{
 		services: make(map[string]Service),
@@ -24,7 +27,8 @@ func NewRegistry(logger *log.Logger) *Registry {
 	}
 }
 
-// Register adds a service to the registry
+// Register adds a service to the registry.
+// It returns an error if a service with the same name is already registered.
 func (r *Registry) Register(service Service) error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
@@ -39,7 +43,8 @@ func (r *Registry) Register(service Service) error {
 	return nil
 }
 
-// Get returns a service by name
+// Get returns a service by name.
+// It returns an error if the service is not found.
 func (r *Registry) Get(name string) (Service, error) {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
@@ -52,7 +57,10 @@ func (r *Registry) Get(name string) (Service, error) {
 	return service, nil
 }
 
-// StartAll starts all services in dependency order
+// StartAll starts all services in dependency order.
+// It builds a dependency graph, performs a topological sort to determine
+// the correct startup order, and starts each service in that order.
+// It waits for each service to become healthy before starting the next one.
 func (r *Registry) StartAll(ctx context.Context) error {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
@@ -83,7 +91,10 @@ func (r *Registry) StartAll(ctx context.Context) error {
 	return nil
 }
 
-// StopAll stops all services in reverse dependency order
+// StopAll stops all services in reverse dependency order.
+// It builds a dependency graph, performs a topological sort, reverses the order,
+// and stops each service in that order. This ensures that services are stopped
+// in the correct order to avoid dependency issues.
 func (r *Registry) StopAll(ctx context.Context) error {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
@@ -114,7 +125,8 @@ func (r *Registry) StopAll(ctx context.Context) error {
 	return nil
 }
 
-// HealthCheck performs health checks on all services
+// HealthCheck performs health checks on all services.
+// It returns a map of service names to health check results (nil if healthy, error if not).
 func (r *Registry) HealthCheck() map[string]error {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
@@ -127,7 +139,8 @@ func (r *Registry) HealthCheck() map[string]error {
 	return results
 }
 
-// waitForHealth waits for a service to become healthy
+// waitForHealth waits for a service to become healthy.
+// It polls the service's Health method until it returns nil or a timeout occurs.
 func (r *Registry) waitForHealth(ctx context.Context, name string) error {
 	service, err := r.Get(name)
 	if err != nil {
@@ -153,7 +166,9 @@ func (r *Registry) waitForHealth(ctx context.Context, name string) error {
 	}
 }
 
-// Helper functions for dependency resolution
+// buildDependencyGraph creates a graph representation of service dependencies.
+// The graph is a map where keys are service names and values are lists of
+// services that the key service depends on.
 func buildDependencyGraph(services map[string]Service) map[string][]string {
 	graph := make(map[string][]string)
 
@@ -165,7 +180,8 @@ func buildDependencyGraph(services map[string]Service) map[string][]string {
 }
 
 // topologicalSort performs a topological sort on the dependency graph
-// and returns the sorted service names
+// and returns the sorted service names. It detects cycles in the dependency
+// graph and returns an error if a cycle is found.
 func topologicalSort(graph map[string][]string) ([]string, error) {
 	// Create a map to track visited nodes
 	visited := make(map[string]bool)

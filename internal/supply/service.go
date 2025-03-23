@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cmatc13/stathera/internal/processor"
 	"github.com/cmatc13/stathera/pkg/service"
+	txproc "github.com/cmatc13/stathera/pkg/transaction"
 )
 
 // SupplyManagerService wraps the SupplyManager as a Service
@@ -24,7 +24,7 @@ func NewSupplyManagerService(
 	maxInflation float64,
 	maxStepSize float64,
 	reserveAddress string,
-	txProcessor processor.TransactionProcessor,
+	txProcessor txproc.Processor,
 ) (*SupplyManagerService, error) {
 	manager, err := NewSupplyManager(
 		redisAddr,

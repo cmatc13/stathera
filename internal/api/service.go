@@ -9,13 +9,14 @@ import (
 	"github.com/cmatc13/stathera/internal/processor"
 	"github.com/cmatc13/stathera/pkg/config"
 	"github.com/cmatc13/stathera/pkg/service"
+	txproc "github.com/cmatc13/stathera/pkg/transaction"
 )
 
 // APIService wraps the API server as a Service
 type APIService struct {
 	server      *Server
 	config      *config.Config
-	txProcessor *processor.TransactionProcessor
+	txProcessor txproc.Processor
 	orderbook   *orderbook.OrderBookService
 	status      service.Status
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cmatc13/stathera/internal/transaction"
+	txproc "github.com/cmatc13/stathera/pkg/transaction"
 
 	"github.com/go-redis/redis/v8"
 )
@@ -44,12 +45,7 @@ type SupplyManager struct {
 	maxInflation   float64
 	maxStepSize    float64
 	reserveAddress string
-	txProcessor    TransactionProcessor
-}
-
-// TransactionProcessor interface for processing inflation transactions
-type TransactionProcessor interface {
-	SubmitTransaction(tx *transaction.Transaction) error
+	txProcessor    txproc.Processor
 }
 
 // NewSupplyManager creates a new supply manager
@@ -59,7 +55,7 @@ func NewSupplyManager(
 	maxInflation float64,
 	maxStepSize float64,
 	reserveAddress string,
-	txProcessor TransactionProcessor,
+	txProcessor txproc.Processor,
 ) (*SupplyManager, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr: redisAddr,

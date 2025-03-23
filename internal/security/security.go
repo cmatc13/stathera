@@ -164,9 +164,6 @@ func (sm *SecurityManager) ValidateCSRFToken(sessionID, token string) bool {
 // CheckRateLimit checks if a rate limit has been exceeded
 // Returns true if the request should be allowed, false if rate limited
 func (sm *SecurityManager) CheckRateLimit(key string, limit int, period time.Duration) (bool, error) {
-	now := time.Now().Unix()
-	periodSec := int64(period.Seconds())
-
 	// Use Redis pipeline for atomic operations
 	pipe := sm.client.Pipeline()
 
