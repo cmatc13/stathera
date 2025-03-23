@@ -27,6 +27,8 @@ type Config struct {
 	Supply    SupplyConfig    `mapstructure:"supply" json:"supply"`
 	Processor ProcessorConfig `mapstructure:"processor" json:"processor"`
 	Log       LogConfig       `mapstructure:"log" json:"log"`
+	Metrics   MetricsConfig   `mapstructure:"metrics" json:"metrics"`
+	Health    HealthConfig    `mapstructure:"health" json:"health"`
 	Env       string          `mapstructure:"env" json:"env"`
 }
 
@@ -91,9 +93,29 @@ type ProcessorConfig struct {
 
 // LogConfig represents logging configuration
 type LogConfig struct {
-	Level      string `mapstructure:"level" json:"level"`
-	Format     string `mapstructure:"format" json:"format"`
-	OutputPath string `mapstructure:"output_path" json:"output_path"`
+	Level        string `mapstructure:"level" json:"level"`
+	Format       string `mapstructure:"format" json:"format"`
+	OutputPath   string `mapstructure:"output_path" json:"output_path"`
+	ServiceName  string `mapstructure:"service_name" json:"service_name"`
+	Environment  string `mapstructure:"environment" json:"environment"`
+	IncludeTrace bool   `mapstructure:"include_trace" json:"include_trace"`
+}
+
+// MetricsConfig represents metrics collection configuration
+type MetricsConfig struct {
+	Enabled     bool   `mapstructure:"enabled" json:"enabled"`
+	Namespace   string `mapstructure:"namespace" json:"namespace"`
+	ServiceName string `mapstructure:"service_name" json:"service_name"`
+	Endpoint    string `mapstructure:"endpoint" json:"endpoint"`
+	Port        string `mapstructure:"port" json:"port"`
+}
+
+// HealthConfig represents health check configuration
+type HealthConfig struct {
+	Enabled  bool   `mapstructure:"enabled" json:"enabled"`
+	Endpoint string `mapstructure:"endpoint" json:"endpoint"`
+	Port     string `mapstructure:"port" json:"port"`
+	Interval string `mapstructure:"interval" json:"interval"`
 }
 
 // LoadOptions contains options for loading configuration
@@ -246,6 +268,22 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.output_path", "stdout")
+	v.SetDefault("log.service_name", "stathera")
+	v.SetDefault("log.environment", "development")
+	v.SetDefault("log.include_trace", true)
+
+	// Metrics defaults
+	v.SetDefault("metrics.enabled", true)
+	v.SetDefault("metrics.namespace", "stathera")
+	v.SetDefault("metrics.service_name", "stathera")
+	v.SetDefault("metrics.endpoint", "/metrics")
+	v.SetDefault("metrics.port", "9090")
+
+	// Health defaults
+	v.SetDefault("health.enabled", true)
+	v.SetDefault("health.endpoint", "/health")
+	v.SetDefault("health.port", "8081")
+	v.SetDefault("health.interval", "30s")
 
 	// Environment defaults
 	v.SetDefault("env", "development")
@@ -283,6 +321,22 @@ func bindFlags(v *viper.Viper, prefix string) error {
 	// Log flags
 	flags.String(prefix+"log.level", "info", "Log level (debug, info, warn, error)")
 	flags.String(prefix+"log.format", "json", "Log format (json, text)")
+	flags.String(prefix+"log.service_name", "stathera", "Service name for logging")
+	flags.String(prefix+"log.environment", "development", "Environment for logging")
+	flags.Bool(prefix+"log.include_trace", true, "Include stack traces in error logs")
+
+	// Metrics flags
+	flags.Bool(prefix+"metrics.enabled", true, "Enable metrics collection")
+	flags.String(prefix+"metrics.namespace", "stathera", "Metrics namespace")
+	flags.String(prefix+"metrics.service_name", "stathera", "Service name for metrics")
+	flags.String(prefix+"metrics.endpoint", "/metrics", "Metrics endpoint")
+	flags.String(prefix+"metrics.port", "9090", "Metrics server port")
+
+	// Health flags
+	flags.Bool(prefix+"health.enabled", true, "Enable health checks")
+	flags.String(prefix+"health.endpoint", "/health", "Health check endpoint")
+	flags.String(prefix+"health.port", "8081", "Health check server port")
+	flags.String(prefix+"health.interval", "30s", "Health check interval")
 
 	// Parse flags
 	if err := flags.Parse(os.Args[1:]); err != nil {
@@ -440,6 +494,50 @@ func validateConfig(cfg *Config) error {
 	validLogFormats := map[string]bool{"json": true, "text": true}
 	if !validLogFormats[strings.ToLower(cfg.Log.Format)] {
 		validationErrors = append(validationErrors, "log.format must be one of: json, text")
+	}
+
+	if cfg.Log.ServiceName == "" {
+		validationErrors = append(validationErrors, "log.service_name cannot be empty")
+	}
+
+	// Validate Metrics configuration
+	if cfg.Metrics.Enabled {
+		if cfg.Metrics.Namespace == "" {
+			validationErrors = append(validationErrors, "metrics.namespace cannot be empty when metrics are enabled")
+		}
+
+		if cfg.Metrics.ServiceName == "" {
+			validationErrors = append(validationErrors, "metrics.service_name cannot be empty when metrics are enabled")
+		}
+
+		if cfg.Metrics.Endpoint == "" {
+			validationErrors = append(validationErrors, "metrics.endpoint cannot be empty when metrics are enabled")
+		}
+
+		if cfg.Metrics.Port == "" {
+			validationErrors = append(validationErrors, "metrics.port cannot be empty when metrics are enabled")
+		} else if port, err := strconv.Atoi(cfg.Metrics.Port); err != nil || port <= 0 || port > 65535 {
+			validationErrors = append(validationErrors, "metrics.port must be a valid port number (1-65535)")
+		}
+	}
+
+	// Validate Health configuration
+	if cfg.Health.Enabled {
+		if cfg.Health.Endpoint == "" {
+			validationErrors = append(validationErrors, "health.endpoint cannot be empty when health checks are enabled")
+		}
+
+		if cfg.Health.Port == "" {
+			validationErrors = append(validationErrors, "health.port cannot be empty when health checks are enabled")
+		} else if port, err := strconv.Atoi(cfg.Health.Port); err != nil || port <= 0 || port > 65535 {
+			validationErrors = append(validationErrors, "health.port must be a valid port number (1-65535)")
+		}
+
+		if cfg.Health.Interval == "" {
+			validationErrors = append(validationErrors, "health.interval cannot be empty when health checks are enabled")
+		} else if _, err := time.ParseDuration(cfg.Health.Interval); err != nil {
+			validationErrors = append(validationErrors, fmt.Sprintf("invalid health.interval: %v", err))
+		}
 	}
 
 	// Return validation errors if any

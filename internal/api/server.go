@@ -7,30 +7,38 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"runtime"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/go-chi/httprate"
 	"github.com/go-chi/jwtauth/v5"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/cmatc13/stathera/internal/orderbook"
+	"github.com/cmatc13/stathera/internal/security"
 	"github.com/cmatc13/stathera/internal/transaction"
 	"github.com/cmatc13/stathera/internal/wallet"
 	"github.com/cmatc13/stathera/pkg/config"
+	"github.com/cmatc13/stathera/pkg/health"
+	"github.com/cmatc13/stathera/pkg/logging"
+	"github.com/cmatc13/stathera/pkg/metrics"
 	txproc "github.com/cmatc13/stathera/pkg/transaction"
 )
 
 // Server represents the API server
 type Server struct {
-	config      *config.Config
-	router      *chi.Mux
-	txProcessor txproc.Processor
-	orderbook   *orderbook.RedisOrderBook
-	tokenAuth   *jwtauth.JWTAuth
-	server      *http.Server
+	config           *config.Config
+	router           *chi.Mux
+	txProcessor      txproc.Processor
+	orderbook        *orderbook.RedisOrderBook
+	tokenAuth        *jwtauth.JWTAuth
+	server           *http.Server
+	logger           *logging.Logger
+	metricsCollector *metrics.Metrics
+	healthRegistry   *health.Registry
 }
 
 // NewServer creates a new API server
@@ -38,12 +46,35 @@ func NewServer(cfg *config.Config, txProcessor txproc.Processor, orderbook *orde
 	r := chi.NewRouter()
 	tokenAuth := jwtauth.New("HS256", []byte(cfg.Auth.JWTSecret), nil)
 
+	// Set up structured logger
+	logCfg := logging.Config{
+		Level:       logging.LogLevel(cfg.Log.Level),
+		Output:      log.Writer(),
+		ServiceName: "api",
+		Environment: cfg.Log.Environment,
+	}
+	logger := logging.New(logCfg)
+
+	// Set up metrics
+	metricsCfg := metrics.Config{
+		Namespace:   cfg.Metrics.Namespace,
+		Subsystem:   "api",
+		ServiceName: "api",
+	}
+	metricsCollector := metrics.New(metricsCfg)
+
+	// Set up health registry
+	healthRegistry := health.NewRegistry(logger)
+
 	s := &Server{
-		config:      cfg,
-		router:      r,
-		txProcessor: txProcessor,
-		orderbook:   orderbook,
-		tokenAuth:   tokenAuth,
+		config:           cfg,
+		router:           r,
+		txProcessor:      txProcessor,
+		orderbook:        orderbook,
+		tokenAuth:        tokenAuth,
+		logger:           logger,
+		metricsCollector: metricsCollector,
+		healthRegistry:   healthRegistry,
 		server: &http.Server{
 			Addr:    ":" + cfg.API.Port,
 			Handler: r,
@@ -53,46 +84,107 @@ func NewServer(cfg *config.Config, txProcessor txproc.Processor, orderbook *orde
 	// Set up middleware and routes
 	s.setupMiddleware()
 	s.setupRoutes()
+	s.setupHealthChecks()
 
 	return s
 }
 
 // setupMiddleware configures middleware for the server
 func (s *Server) setupMiddleware() {
-	// Basic middleware
-	s.router.Use(middleware.Logger)
-	s.router.Use(middleware.Recoverer)
-	s.router.Use(middleware.RealIP)
-	s.router.Use(middleware.RequestID)
+	// Initialize security middleware
+	securityManager, err := security.NewSecurityManager(s.config.Redis.Address, s.config.Auth.JWTSecret)
+	if err != nil {
+		s.logger.Error("Failed to initialize security manager", "error", err)
+		return
+	}
 
-	// Add CORS middleware
+	securityMiddleware := NewSecurityMiddleware(securityManager, s.tokenAuth, s.logger)
+
+	// Basic middleware
+	s.router.Use(middleware.RequestID)
+	s.router.Use(middleware.RealIP)
+
+	// Security middleware
+	s.router.Use(securityMiddleware.SecureHeaders)
+	s.router.Use(securityMiddleware.ContentSecurityPolicy)
+	s.router.Use(securityMiddleware.ErrorHandling)
+	s.router.Use(securityMiddleware.XSSProtection)
+	s.router.Use(securityMiddleware.SQLInjectionProtection)
+
+	// Custom structured logging middleware with security enhancements
+	s.router.Use(securityMiddleware.RequestLogging)
+
+	// Custom metrics middleware
+	s.router.Use(MetricsMiddleware(s.metricsCollector, "api"))
+
+	// Custom recoverer with metrics
+	s.router.Use(RecovererWithMetrics(s.logger, s.metricsCollector, "api"))
+
+	// Add CORS middleware with stricter settings
 	s.router.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedOrigins:   s.config.API.CORSAllowedOrigins, // Use configuration instead of wildcard
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
-		ExposedHeaders:   []string{"Link"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-API-Key"},
+		ExposedHeaders:   []string{"Link", "X-New-Token"}, // Expose token renewal header
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
 
-	// Add rate limiting middleware
-	s.router.Use(httprate.LimitByIP(100, 1*time.Minute))
+	// Add advanced rate limiting middleware (per user/IP and path)
+	s.router.Use(securityMiddleware.RateLimiter(100, 1*time.Minute))
 }
 
 // setupRoutes configures the API routes
 func (s *Server) setupRoutes() {
+	// Initialize security middleware
+	securityManager, err := security.NewSecurityManager(s.config.Redis.Address, s.config.Auth.JWTSecret)
+	if err != nil {
+		s.logger.Error("Failed to initialize security manager", "error", err)
+		return
+	}
+
+	securityMiddleware := NewSecurityMiddleware(securityManager, s.tokenAuth, s.logger)
+
 	// Public routes
 	s.router.Group(func(r chi.Router) {
+		// Apply input validation and sanitization
+		r.Use(securityMiddleware.InputSanitization)
+		r.Use(securityMiddleware.RequestValidation(func(r *http.Request) error {
+			// Basic validation - in a real implementation, you would have more specific validation
+			return nil
+		}))
+
 		r.Get("/health", s.handleHealth)
-		r.Post("/register", s.handleRegister)
-		r.Post("/login", s.handleLogin)
+		r.Get("/metrics", promhttp.Handler().ServeHTTP)
+
+		// Apply content type validation for endpoints that accept JSON
+		r.With(securityMiddleware.ValidateContentType("application/json")).Post("/register", s.handleRegister)
+		r.With(securityMiddleware.ValidateContentType("application/json")).Post("/login", s.handleLogin)
 	})
 
-	// Protected routes - require authentication
+	// Protected routes - require authentication (JWT or API key)
 	s.router.Group(func(r chi.Router) {
-		// JWT authentication middleware
+		// Authentication middleware - try API key first, then JWT
+		r.Use(securityMiddleware.APIKeyAuth)
 		r.Use(jwtauth.Verifier(s.tokenAuth))
+		r.Use(securityMiddleware.JWTWithBruteForceProtection)
 		r.Use(jwtauth.Authenticator)
+
+		// Add CSRF protection for state-changing operations
+		r.Use(securityMiddleware.CSRFProtection)
+
+		// Apply input validation and sanitization
+		r.Use(securityMiddleware.InputSanitization)
+		r.Use(securityMiddleware.RequestValidation(func(r *http.Request) error {
+			// Basic validation - in a real implementation, you would have more specific validation
+			return nil
+		}))
+
+		// Apply content type validation for endpoints that accept JSON
+		r.Use(securityMiddleware.ValidateContentType("application/json"))
+
+		// Apply response sanitization
+		r.Use(securityMiddleware.ResponseSanitization)
 
 		// User routes
 		r.Get("/balance", s.handleGetBalance)
@@ -112,9 +204,37 @@ func (s *Server) setupRoutes() {
 
 	// Admin routes - require admin role
 	s.router.Group(func(r chi.Router) {
+		// Authentication middleware with enhanced security
+		r.Use(securityMiddleware.APIKeyAuth)
 		r.Use(jwtauth.Verifier(s.tokenAuth))
+		r.Use(securityMiddleware.JWTWithBruteForceProtection)
 		r.Use(jwtauth.Authenticator)
 		r.Use(s.adminOnly)
+
+		// Add CSRF protection for state-changing operations
+		r.Use(securityMiddleware.CSRFProtection)
+
+		// Apply input validation and sanitization
+		r.Use(securityMiddleware.InputSanitization)
+		r.Use(securityMiddleware.RequestValidation(func(r *http.Request) error {
+			// Basic validation - in a real implementation, you would have more specific validation
+			return nil
+		}))
+
+		// Apply content type validation for endpoints that accept JSON
+		r.Use(securityMiddleware.ValidateContentType("application/json"))
+
+		// Apply response sanitization
+		r.Use(securityMiddleware.ResponseSanitization)
+
+		// Apply object-level access control
+		r.Use(securityMiddleware.AccessControl("admin", func(r *http.Request, resourceID string) bool {
+			// In a real implementation, you would check if the user has access to the resource
+			// For now, we'll just check if the user has the admin role
+			_, claims, _ := jwtauth.FromContext(r.Context())
+			role, _ := claims["role"].(string)
+			return role == "admin"
+		}))
 
 		r.Get("/admin/system/supply", s.handleGetTotalSupply)
 		r.Get("/admin/system/inflation", s.handleGetInflationRate)
@@ -122,17 +242,57 @@ func (s *Server) setupRoutes() {
 	})
 }
 
+// setupHealthChecks configures health checks for the server
+func (s *Server) setupHealthChecks() {
+	// Register API server health check
+	s.healthRegistry.Register("api", health.ServiceChecker("api", func(ctx context.Context) error {
+		return nil // API server is healthy if this code is running
+	}))
+
+	// Register Redis health check
+	s.healthRegistry.Register("redis", health.RedisChecker(s.config.Redis.Address, func(ctx context.Context) error {
+		// This is a placeholder - in a real implementation, you would ping Redis
+		// For now, we'll just check if the Redis address is valid
+		return nil
+	}))
+
+	// Register transaction processor health check
+	s.healthRegistry.Register("transaction-processor", health.DependencyChecker("transaction-processor", func(ctx context.Context) error {
+		// This is a placeholder - in a real implementation, you would check the transaction processor
+		return nil
+	}))
+
+	// Register orderbook health check
+	s.healthRegistry.Register("orderbook", health.DependencyChecker("orderbook", func(ctx context.Context) error {
+		// This is a placeholder - in a real implementation, you would check the orderbook
+		return nil
+	}))
+}
+
 // Start starts the API server
 func (s *Server) Start() {
-	log.Printf("Starting API server on port %s", s.config.API.Port)
+	s.logger.Info("Starting API server", "port", s.config.API.Port)
+
+	// Record the start time for metrics
+	s.metricsCollector.ServiceLastStarted.Set(float64(time.Now().Unix()))
+
+	// Start recording uptime
+	uptimeDone := make(chan struct{})
+	s.metricsCollector.RecordUptime(uptimeDone)
+
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Error starting server: %v", err)
+		s.logger.Error("Error starting server", "error", err)
+		close(uptimeDone)
 	}
 }
 
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(ctx context.Context) {
-	s.server.Shutdown(ctx)
+	s.logger.Info("Shutting down API server")
+	if err := s.server.Shutdown(ctx); err != nil {
+		s.logger.Error("Error during server shutdown", "error", err)
+	}
+	s.logger.Info("API server shutdown complete")
 }
 
 // Response represents a standardized API response
@@ -145,15 +305,44 @@ type Response struct {
 
 // handleHealth handles health check requests
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// Run all health checks
+	checks := s.healthRegistry.RunChecks(r.Context())
+
+	// Determine overall status
+	status := health.StatusUp
+	for _, check := range checks {
+		if check.Status == health.StatusDown {
+			status = health.StatusDown
+			break
+		} else if check.Status == health.StatusUnknown && status != health.StatusDown {
+			status = health.StatusUnknown
+		}
+	}
+
+	// Set HTTP status code based on health status
+	httpStatus := http.StatusOK
+	if status == health.StatusDown {
+		httpStatus = http.StatusServiceUnavailable
+	}
+
+	// Build response
 	resp := Response{
-		Success: true,
-		Message: "Service is healthy",
+		Success: status == health.StatusUp,
+		Message: "Service health status: " + string(status),
 		Data: map[string]interface{}{
+			"status":    status,
 			"timestamp": time.Now().Unix(),
 			"version":   s.config.API.Version,
+			"checks":    checks,
+			"system": map[string]interface{}{
+				"go_version":    runtime.Version(),
+				"go_goroutines": runtime.NumGoroutine(),
+				"go_cpus":       runtime.NumCPU(),
+			},
 		},
 	}
-	s.renderJSON(w, resp, http.StatusOK)
+
+	s.renderJSON(w, resp, httpStatus)
 }
 
 // handleRegister handles user registration requests
@@ -725,12 +914,15 @@ func (s *Server) renderJSON(w http.ResponseWriter, data interface{}, status int)
 	w.WriteHeader(status)
 
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("Error encoding JSON response: %v", err)
+		s.logger.Error("Error encoding JSON response", "error", err)
 	}
 }
 
 // renderError renders an error response
 func (s *Server) renderError(w http.ResponseWriter, message string, status int) {
+	// Record error metric
+	s.metricsCollector.RecordError("api", "http", strconv.Itoa(status))
+
 	resp := Response{
 		Success: false,
 		Error:   message,

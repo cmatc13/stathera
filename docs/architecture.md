@@ -8,7 +8,7 @@ Stathera is a financial platform that provides transaction processing, order boo
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Stathera System                           │
+│                        Stathera System                          │
 │                                                                 │
 │  ┌───────────┐     ┌───────────┐     ┌───────────────────────┐  │
 │  │           │     │           │     │                       │  │
