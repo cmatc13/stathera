@@ -17,19 +17,19 @@ Unlike fixed-supply cryptocurrencies that foster speculative hoarding, or fiat c
 
 ## Table of Contents
 
-1. [Introduction](#introduction)
-2. [Historical Context and Problem Statement](#historical-context-and-problem-statement)
-3. [Stathera: System Overview](#stathera-system-overview)
-4. [Technical Architecture](#technical-architecture)
-5. [Monetary Policy and Economic Model](#monetary-policy-and-economic-model)
-6. [Security Framework](#security-framework)
-7. [Governance Model](#governance-model)
-8. [Comparative Analysis](#comparative-analysis)
-9. [Adoption Strategy](#adoption-strategy)
-10. [Socioeconomic Implications](#socioeconomic-implications)
-11. [Future Development](#future-development)
-12. [Conclusion](#conclusion)
-13. [References](#references)
+1. [Introduction](#1-introduction)
+2. [Historical Context and Problem Statement](#2-historical-context-and-problem-statement)
+3. [Stathera: System Overview](#3-stathera-system-overview)
+4. [Technical Architecture](#4-technical-architecture)
+5. [Monetary Policy and Economic Model](#5-monetary-policy-and-economic-model)
+6. [Security Framework](#6-security-framework)
+7. [Governance Model](#7-governance-model)
+8. [Comparative Analysis](#8-comparative-analysis)
+9. [Adoption Strategy](#9-adoption-strategy)
+10. [Socioeconomic Implications](#10-socioeconomic-implications)
+11. [Future Development](#11-future-development)
+12. [Conclusion](#12-conclusion)
+13. [References](#13-references)
 
 ---
 
