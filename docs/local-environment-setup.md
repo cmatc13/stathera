@@ -85,10 +85,13 @@ This command starts:
 docker-compose ps
 
 # Check Redis connection
-redis-cli ping
+#redis-cli ping
+
+e.g. 
 
 # Check Kafka topics (optional, requires Kafka tools)
 kafka-topics.sh --bootstrap-server localhost:9092 --list
+
 ```
 
 ## 3. Configuring the Application
